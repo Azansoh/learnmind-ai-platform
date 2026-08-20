@@ -42,7 +42,7 @@ app.use("/api/activities", activityRoutes);
 app.use("/api/ai", aiRoutes);
 
 if (isProduction) {
-  const clientBuild = path.join(__dirname, "../client/dist");
+  const clientBuild = path.join(__dirname, "public");
   console.log("Serving client from:", clientBuild);
   app.use(express.static(clientBuild));
   app.get("/", (req, res) => {

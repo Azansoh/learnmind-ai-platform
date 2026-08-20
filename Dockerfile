@@ -8,12 +8,11 @@ RUN cd server && npm install
 COPY client/package.json ./client/
 RUN cd client && npm install
 
-COPY server/ ./server/
 COPY client/ ./client/
-
 RUN cd client && npm run build
 
-RUN ls -la /app/client/dist/
+COPY server/ ./server/
+RUN cp -r /app/client/dist /app/server/public
 
 EXPOSE 5000
 

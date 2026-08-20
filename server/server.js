@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "url";
 import connectDB from "./config/db.js";
 
 import authRoutes from "./routes/auth.js";
@@ -17,6 +18,10 @@ dotenv.config();
 
 const app = express();
 
+// Set __dirname manually for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const isProduction = process.env.NODE_ENV === "production" || process.env.NODE_ENV === undefined;
 const PORT = process.env.PORT || 5000;
 
@@ -29,10 +34,12 @@ app.use(
 app.use(express.json());
 app.use(cookieParser());
 
+// Health Check API
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", message: "LearnMind AI server is running", production: isProduction });
 });
 
+// API Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/courses", courseRoutes);
 app.use("/api/quizzes", quizRoutes);
@@ -40,12 +47,12 @@ app.use("/api/studyplan", studyplanRoutes);
 app.use("/api/activities", activityRoutes);
 app.use("/api/ai", aiRoutes);
 
+// Serve Frontend in Production Mode
 if (isProduction) {
   const candidates = [
     path.join(process.cwd(), "client", "dist"),
     path.join(process.cwd(), "server", "client", "dist"),
-    path.join(__dirname, "..", "client", "dist"),
-    path.join(__dirname, "public"),
+    path.resolve(__dirname, "..", "client", "dist"),
   ];
 
   let clientBuild = null;
@@ -58,19 +65,25 @@ if (isProduction) {
 
   if (clientBuild) {
     console.log("Serving client from:", clientBuild);
+    
+    // Serve static frontend assets (js, css, images)
     app.use(express.static(clientBuild));
-    app.use((req, res, next) => {
-      if (req.method === "GET" && !req.path.startsWith("/api")) {
-        res.sendFile(path.join(clientBuild, "index.html"));
-      } else {
-        next();
+
+    // Handle single-page app (SPA) fallback routing for React Router
+    app.get("*", (req, res, next) => {
+      if (req.path.startsWith("/api")) {
+        return next();
       }
+      res.sendFile(path.join(clientBuild, "index.html"), (err) => {
+        if (err) next(err);
+      });
     });
   } else {
-    console.error("Client build not found! Tried:", candidates);
+    console.error("Client build not found! Tried directories:", candidates);
   }
 }
 
+// Global Error Handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ message: err.message || "Server error" });

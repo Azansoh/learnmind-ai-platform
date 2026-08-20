@@ -42,14 +42,15 @@ app.use("/api/activities", activityRoutes);
 app.use("/api/ai", aiRoutes);
 
 if (isProduction) {
-  const clientBuild = path.join(__dirname, "public");
+  const clientBuild = path.join(__dirname, "../client/dist");
   console.log("Serving client from:", clientBuild);
   app.use(express.static(clientBuild));
-  app.get("/", (req, res) => {
-    res.sendFile(path.join(clientBuild, "index.html"));
-  });
-  app.get("/{*splat}", (req, res) => {
-    res.sendFile(path.join(clientBuild, "index.html"));
+  app.use((req, res, next) => {
+    if (req.method === "GET" && !req.path.startsWith("/api")) {
+      res.sendFile(path.join(clientBuild, "index.html"));
+    } else {
+      next();
+    }
   });
 }
 

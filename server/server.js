@@ -70,13 +70,12 @@ if (isProduction) {
     app.use(express.static(clientBuild));
 
     // Handle single-page app (SPA) fallback routing for React Router
-    app.get("*", (req, res, next) => {
-      if (req.path.startsWith("/api")) {
-        return next();
+    app.use((req, res, next) => {
+      if (req.method === "GET" && !req.path.startsWith("/api")) {
+        res.sendFile(path.join(clientBuild, "index.html"));
+      } else {
+        next();
       }
-      res.sendFile(path.join(clientBuild, "index.html"), (err) => {
-        if (err) next(err);
-      });
     });
   } else {
     console.error("Client build not found! Tried directories:", candidates);

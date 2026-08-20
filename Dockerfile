@@ -13,6 +13,8 @@ COPY client/ ./client/
 
 RUN cd client && npm run build
 
+RUN ls -la /app/client/dist/
+
 EXPOSE 5000
 
 CMD ["node", "server/server.js"]

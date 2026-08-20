@@ -21,9 +21,11 @@ const app = express();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const isProduction = process.env.NODE_ENV === "production";
+
 app.use(
   cors({
-    origin: process.env.NODE_ENV === "production" ? false : "http://localhost:5173",
+    origin: isProduction ? true : "http://localhost:5173",
     credentials: true,
   })
 );
@@ -41,10 +43,10 @@ app.use("/api/studyplan", studyplanRoutes);
 app.use("/api/activities", activityRoutes);
 app.use("/api/ai", aiRoutes);
 
-if (process.env.NODE_ENV === "production") {
+if (isProduction) {
   const clientBuild = path.join(__dirname, "../client/dist");
   app.use(express.static(clientBuild));
-  app.get("*", (req, res) => {
+  app.get("/{*path}", (req, res) => {
     res.sendFile(path.join(clientBuild, "index.html"));
   });
 }
@@ -56,6 +58,6 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
 });

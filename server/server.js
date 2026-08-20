@@ -3,7 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import path from "path";
-import { fileURLToPath } from "url";
+import fs from "fs";
 import connectDB from "./config/db.js";
 
 import authRoutes from "./routes/auth.js";
@@ -16,10 +16,9 @@ import aiRoutes from "./routes/ai.js";
 dotenv.config();
 
 const app = express();
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
-const isProduction = process.env.NODE_ENV === "production";
+const isProduction = process.env.NODE_ENV === "production" || process.env.NODE_ENV === undefined;
+const PORT = process.env.PORT || 5000;
 
 app.use(
   cors({
@@ -31,7 +30,7 @@ app.use(express.json());
 app.use(cookieParser());
 
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", message: "LearnMind AI server is running" });
+  res.json({ status: "ok", message: "LearnMind AI server is running", production: isProduction });
 });
 
 app.use("/api/auth", authRoutes);
@@ -42,24 +41,40 @@ app.use("/api/activities", activityRoutes);
 app.use("/api/ai", aiRoutes);
 
 if (isProduction) {
-  const clientBuild = path.join(__dirname, "../client/dist");
-  console.log("Serving client from:", clientBuild);
-  app.use(express.static(clientBuild));
-  app.use((req, res, next) => {
-    if (req.method === "GET" && !req.path.startsWith("/api")) {
-      res.sendFile(path.join(clientBuild, "index.html"));
-    } else {
-      next();
+  const candidates = [
+    path.join(process.cwd(), "client", "dist"),
+    path.join(process.cwd(), "server", "client", "dist"),
+    path.join(__dirname, "..", "client", "dist"),
+    path.join(__dirname, "public"),
+  ];
+
+  let clientBuild = null;
+  for (const dir of candidates) {
+    if (fs.existsSync(dir) && fs.existsSync(path.join(dir, "index.html"))) {
+      clientBuild = dir;
+      break;
     }
-  });
+  }
+
+  if (clientBuild) {
+    console.log("Serving client from:", clientBuild);
+    app.use(express.static(clientBuild));
+    app.use((req, res, next) => {
+      if (req.method === "GET" && !req.path.startsWith("/api")) {
+        res.sendFile(path.join(clientBuild, "index.html"));
+      } else {
+        next();
+      }
+    });
+  } else {
+    console.error("Client build not found! Tried:", candidates);
+  }
 }
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ message: err.message || "Server error" });
 });
-
-const PORT = process.env.PORT || 5000;
 
 connectDB().then(() => {
   app.listen(PORT, "0.0.0.0", () => {

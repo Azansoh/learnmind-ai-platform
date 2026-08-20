@@ -15,8 +15,6 @@ import aiRoutes from "./routes/ai.js";
 
 dotenv.config();
 
-connectDB();
-
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,7 +44,7 @@ app.use("/api/ai", aiRoutes);
 if (isProduction) {
   const clientBuild = path.join(__dirname, "../client/dist");
   app.use(express.static(clientBuild));
-  app.get("/{*path}", (req, res) => {
+  app.get("/{*splat}", (req, res) => {
     res.sendFile(path.join(clientBuild, "index.html"));
   });
 }
@@ -58,6 +56,8 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
+connectDB().then(() => {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on port ${PORT}`);
+  });
 });

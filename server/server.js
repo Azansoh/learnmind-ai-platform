@@ -4,7 +4,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 
-import { app, isProduction } from "./app.js";
+import { app } from "./app.js";
 import connectDB from "./config/db.js";
 
 dotenv.config();
@@ -15,39 +15,37 @@ const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 5000;
 
-// Serve Frontend in Production Mode
-if (isProduction) {
-  const candidates = [
-    path.join(process.cwd(), "client", "dist"),
-    path.join(process.cwd(), "server", "client", "dist"),
-    path.resolve(__dirname, "..", "client", "dist"),
-  ];
+// Serve the frontend build whenever it exists (independent of NODE_ENV)
+const candidates = [
+  path.join(process.cwd(), "client", "dist"),
+  path.join(process.cwd(), "server", "client", "dist"),
+  path.resolve(__dirname, "..", "client", "dist"),
+];
 
-  let clientBuild = null;
-  for (const dir of candidates) {
-    if (fs.existsSync(dir) && fs.existsSync(path.join(dir, "index.html"))) {
-      clientBuild = dir;
-      break;
+let clientBuild = null;
+for (const dir of candidates) {
+  if (fs.existsSync(dir) && fs.existsSync(path.join(dir, "index.html"))) {
+    clientBuild = dir;
+    break;
+  }
+}
+
+if (clientBuild) {
+  console.log("Serving client from:", clientBuild);
+
+  // Serve static frontend assets (js, css, images)
+  app.use(express.static(clientBuild));
+
+  // Handle single-page app (SPA) fallback routing for React Router
+  app.use((req, res, next) => {
+    if (req.method === "GET" && !req.path.startsWith("/api")) {
+      res.sendFile(path.join(clientBuild, "index.html"));
+    } else {
+      next();
     }
-  }
-
-  if (clientBuild) {
-    console.log("Serving client from:", clientBuild);
-
-    // Serve static frontend assets (js, css, images)
-    app.use(express.static(clientBuild));
-
-    // Handle single-page app (SPA) fallback routing for React Router
-    app.use((req, res, next) => {
-      if (req.method === "GET" && !req.path.startsWith("/api")) {
-        res.sendFile(path.join(clientBuild, "index.html"));
-      } else {
-        next();
-      }
-    });
-  } else {
-    console.error("Client build not found! Tried directories:", candidates);
-  }
+  });
+} else {
+  console.error("Client build not found! Tried directories:", candidates);
 }
 
 connectDB().then(() => {

@@ -29,6 +29,46 @@ const getApiKey = () => {
   return apiKey && apiKey !== "your_mistral_api_key_here" ? apiKey : null;
 };
 
+const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
+const MAX_MISTRAL_RETRIES = 3;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const callMistral = async (apiKey, body) => {
+  let lastResponse = null;
+
+  for (let attempt = 0; attempt < MAX_MISTRAL_RETRIES; attempt++) {
+    const response = await fetch(MISTRAL_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    lastResponse = response;
+
+    if (response.status !== 429 && response.status < 500) {
+      return response;
+    }
+
+    const retryAfterMs = parseInt(response.headers.get("retry-after") || "", 10);
+    const delay = Math.min(
+      Number.isFinite(retryAfterMs) && retryAfterMs > 0
+        ? retryAfterMs * 1000
+        : 1200 * 2 ** attempt,
+      10000
+    );
+    await sleep(delay);
+  }
+
+  return lastResponse;
+};
+
+const rateLimitedMessage =
+  "The AI service is temporarily busy. Please wait a few seconds and try again.";
+
 const extractTextContent = (content) => {
   if (!content) return "";
   if (typeof content === "string") return content;
@@ -124,26 +164,28 @@ export const askAI = async (req, res, next) => {
       systemPrompt += `\nThe current lesson is about: ${lessonContext}`;
     }
 
-    const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "mistral-small-latest",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: message },
-        ],
-        temperature: 0.7,
-        max_tokens: 2000,
-      }),
+    const response = await callMistral(apiKey, {
+      model: "mistral-small-latest",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: message },
+      ],
+      temperature: 0.7,
+      max_tokens: 2000,
     });
+
+    if (!response) {
+      return res
+        .status(502)
+        .json({ message: "AI service is temporarily unavailable. Please try again." });
+    }
 
     const data = await response.json().catch(() => null);
 
     if (!response.ok) {
+      if (response.status === 429) {
+        return res.status(429).json({ message: rateLimitedMessage });
+      }
       const detail =
         data?.error?.message || data?.message || `Mistral API error (${response.status})`;
       return res.status(502).json({ message: `AI service error: ${detail}` });
@@ -183,22 +225,30 @@ export const generateQuiz = async (req, res, next) => {
 
     const prompt = `Generate a quiz with 5 multiple choice questions about: ${topic || courseContext || "web development"}. Return ONLY valid JSON: {"title":"Quiz Title","questions":[{"question":"...","options":["A","B","C","D"],"correctAnswer":0,"explanation":"..."}]}`;
 
-    const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "mistral-small-latest",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.7,
-      }),
+    const response = await callMistral(apiKey, {
+      model: "mistral-small-latest",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7,
     });
+
+    if (!response) {
+      return res.json({
+        ...DEMO_QUIZ,
+        fallback: true,
+        note: "Could not reach the AI service. Showing a demo quiz instead.",
+      });
+    }
 
     const data = await response.json().catch(() => null);
 
     if (!response.ok) {
+      if (response.status === 429) {
+        return res.json({
+          ...DEMO_QUIZ,
+          fallback: true,
+          note: "The AI service is temporarily busy. Showing a demo quiz instead. Please wait a few seconds and try again.",
+        });
+      }
       const detail =
         data?.error?.message || data?.message || `Mistral API error (${response.status})`;
       return res.json({

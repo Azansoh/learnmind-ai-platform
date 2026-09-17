@@ -26,7 +26,8 @@ const DEMO_QUIZ = {
 
 const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const MAX_PROVIDER_RETRIES = 3;
+const MAX_PROVIDER_RETRIES = 2;
+const PROVIDER_BREAK_MS = 5 * 60 * 1000;
 
 const makeBody = (model, messages, isQuiz) => ({
   model,
@@ -36,13 +37,6 @@ const makeBody = (model, messages, isQuiz) => ({
 });
 
 const PROVIDERS = [
-  {
-    name: "Mistral",
-    getKey: () => process.env.MISTRAL_API_KEY,
-    placeholder: "your_mistral_api_key_here",
-    url: MISTRAL_URL,
-    models: ["mistral-small-latest"],
-  },
   {
     name: "Groq",
     getKey: () => process.env.GROQ_API_KEY,
@@ -56,7 +50,37 @@ const PROVIDERS = [
       "openai/gpt-oss-120b",
     ],
   },
+  {
+    name: "Mistral",
+    getKey: () => process.env.MISTRAL_API_KEY,
+    placeholder: "your_mistral_api_key_here",
+    url: MISTRAL_URL,
+    models: ["mistral-small-latest"],
+  },
 ];
+
+const providerHealth = new Map();
+
+const isProviderHealthy = (name) => {
+  const health = providerHealth.get(name);
+  if (!health || health.healthy) return true;
+  return Date.now() - health.since >= health.pauseMs;
+};
+
+const markProviderFailure = (name) => {
+  const health = providerHealth.get(name) || { failures: 0, healthy: true };
+  health.failures = (health.failures || 0) + 1;
+  if (health.failures >= 3) {
+    health.healthy = false;
+    health.since = Date.now();
+    health.pauseMs = PROVIDER_BREAK_MS;
+  }
+  providerHealth.set(name, health);
+};
+
+const markProviderHealthy = (name) => {
+  providerHealth.set(name, { failures: 0, healthy: true });
+};
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -163,8 +187,8 @@ const callProvider = async (provider, messages, isQuiz) => {
         const delay = Math.min(
           Number.isFinite(retryAfterMs) && retryAfterMs > 0
             ? retryAfterMs * 1000
-            : 1200 * 2 ** attempt,
-          10000
+            : 500 * 2 ** attempt,
+          3000
         );
         await sleep(delay);
         continue;
@@ -207,6 +231,8 @@ const chatWithFallback = async (messages, isQuiz = false) => {
   let lastError = null;
 
   for (const provider of PROVIDERS) {
+    if (!isProviderHealthy(provider.name)) continue;
+
     const result = await callProvider(provider, messages, isQuiz);
 
     if (!result.configured) continue;
@@ -216,6 +242,7 @@ const chatWithFallback = async (messages, isQuiz = false) => {
         result.data?.choices?.[0]?.message?.content
       );
       if (content) {
+        markProviderHealthy(provider.name);
         return { ok: true, provider: result.provider, content };
       }
       lastError = {
@@ -223,6 +250,10 @@ const chatWithFallback = async (messages, isQuiz = false) => {
         detail: "AI service returned an empty response.",
       };
       continue;
+    }
+
+    if (result.error?.status === 429) {
+      markProviderFailure(provider.name);
     }
 
     lastError = result.error || {

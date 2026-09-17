@@ -8,6 +8,7 @@ import {
   FaClock,
   FaPlayCircle,
   FaSpinner,
+  FaLock,
 } from "react-icons/fa";
 import api from "../services/api";
 import { useAuth } from "../context/authcontext";
@@ -93,8 +94,10 @@ function Lesson() {
     );
   }
 
-  const { lesson, isCompleted, totalLessons, lessonIndex, courseTitle } = lessonData;
-  const lessons = course.lessons || [];
+  const { lesson, isCompleted, isLocked, totalLessons, lessonIndex, courseTitle } = lessonData;
+  const lessons = [...(course.lessons || [])].sort(
+    (a, b) => (a.order ?? 0) - (b.order ?? 0)
+  );
   const prevLesson = lessonIndex > 0 ? lessons[lessonIndex - 1] : null;
   const nextLesson =
     lessonIndex < totalLessons - 1 ? lessons[lessonIndex + 1] : null;
@@ -150,6 +153,11 @@ function Lesson() {
               <FaCheckCircle className="text-xs" />
               Completed
             </span>
+          ) : isLocked ? (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-700/40 text-slate-400 border border-slate-700/60 text-xs font-bold rounded-full backdrop-blur-md">
+              <FaLock className="text-xs" />
+              Locked
+            </span>
           ) : (
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-xs font-bold rounded-full backdrop-blur-md">
               <FaClock className="text-xs" />
@@ -158,6 +166,23 @@ function Lesson() {
           )}
         </div>
       </div>
+
+      {/* Locked Warning */}
+      {isLocked && (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6 flex items-start gap-4">
+          <div className="w-11 h-11 shrink-0 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-xl flex items-center justify-center">
+            <FaLock className="text-base" />
+          </div>
+          <div>
+            <h3 className="font-bold text-amber-300">
+              This lesson is locked
+            </h3>
+            <p className="text-sm text-amber-400/90 mt-1">
+              Please complete the previous lessons in sequence first.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Video Player */}
       <div className="rounded-2xl bg-slate-900/80 border border-slate-800/80 shadow-lg overflow-hidden backdrop-blur-sm">
@@ -206,6 +231,13 @@ function Lesson() {
             <FaCheckCircle className="text-xl shrink-0" />
             <span className="font-semibold text-sm sm:text-base">
               You have completed this lesson!
+            </span>
+          </div>
+        ) : isLocked ? (
+          <div className="flex items-center gap-3 text-amber-400">
+            <FaLock className="text-xl shrink-0" />
+            <span className="font-semibold text-sm sm:text-base">
+              Complete the previous lessons to unlock this one.
             </span>
           </div>
         ) : (

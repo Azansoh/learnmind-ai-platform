@@ -7,6 +7,7 @@ import {
   FaBookOpen,
   FaUser,
   FaTimes,
+  FaLock,
 } from "react-icons/fa";
 import { useState, useEffect } from "react";
 import api from "../services/api";
@@ -33,8 +34,13 @@ function Course() {
         const enrolledRes = await api.get("/courses/my-courses");
         const found = enrolledRes.data.find((e) => e._id === id);
         setEnrollment(found || null);
-        if (found && found.completedLessons >= 0) {
-          setCompletedLessonIds(Array.isArray(found.completedLessons) ? found.completedLessons : []);
+        if (found) {
+          const ids = Array.isArray(found.completedLessonIds)
+            ? found.completedLessonIds
+            : Array.isArray(found.completedLessons)
+            ? found.completedLessons
+            : [];
+          setCompletedLessonIds(ids);
         }
       } catch {
         setEnrollment(null);
@@ -109,10 +115,20 @@ function Course() {
     );
   }
 
-  const lessons = course.lessons || [];
+  const lessons = [...(course.lessons || [])].sort(
+    (a, b) => (a.order ?? 0) - (b.order ?? 0)
+  );
   const completedCount = enrollment ? (enrollment.completedLessons || 0) : 0;
   const totalLessons = lessons.length;
   const progress = enrollment ? (enrollment.progress || 0) : 0;
+
+  const completedIds = new Set(completedLessonIds);
+  let currentLessonIndex = lessons.findIndex((l) => !completedIds.has(l._id));
+  if (currentLessonIndex === -1) currentLessonIndex = lessons.length;
+
+  const handleLockedLesson = () => {
+    toast.error("Please complete the previous lessons in sequence first.");
+  };
 
   return (
     <div className="space-y-8">
@@ -248,7 +264,8 @@ function Course() {
 
         <div className="space-y-3">
           {lessons.map((lesson, index) => {
-            const isCompleted = completedLessonIds.includes(lesson._id);
+            const isCompleted = completedIds.has(lesson._id);
+            const isLocked = !isCompleted && index > currentLessonIndex;
 
             return (
               <div
@@ -256,6 +273,8 @@ function Course() {
                 className={`flex flex-col sm:flex-row sm:items-center justify-between rounded-xl border p-4 gap-4 transition-all duration-200 ${
                   isCompleted
                     ? "border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/10"
+                    : isLocked
+                    ? "border-slate-800/80 bg-slate-900/40 opacity-70"
                     : "border-slate-800 bg-slate-800/30 hover:border-slate-700 hover:bg-slate-800/60"
                 }`}
               >
@@ -265,18 +284,28 @@ function Course() {
                     className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-sm font-bold ${
                       isCompleted
                         ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                        : isLocked
+                        ? "bg-slate-700/40 text-slate-500 border border-slate-700/50"
                         : "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20"
                     }`}
                   >
                     {isCompleted ? (
                       <FaCheckCircle className="text-lg" />
+                    ) : isLocked ? (
+                      <FaLock className="text-sm" />
                     ) : (
                       <span>{index + 1}</span>
                     )}
                   </div>
 
                   <div>
-                    <p className="font-semibold text-white">{lesson.title}</p>
+                    <p
+                      className={`font-semibold ${
+                        isLocked ? "text-slate-500" : "text-white"
+                      }`}
+                    >
+                      {lesson.title}
+                    </p>
                     <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
                       {lesson.description}
                     </p>
@@ -290,20 +319,31 @@ function Course() {
                     {lesson.duration}
                   </span>
 
-                  {/* Status Action Link */}
-                  <Link to={`/course/${id}/lesson/${lesson._id}`}>
-                    {isCompleted ? (
+                  {/* Status Action */}
+                  {isCompleted ? (
+                    <Link to={`/course/${id}/lesson/${lesson._id}`}>
                       <span className="rounded-lg px-4 py-2 text-xs sm:text-sm font-semibold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 transition-colors flex items-center gap-1.5">
                         <FaCheckCircle className="text-xs" />
                         Completed
                       </span>
-                    ) : (
+                    </Link>
+                  ) : isLocked ? (
+                    <button
+                      onClick={handleLockedLesson}
+                      className="rounded-lg px-4 py-2 text-xs sm:text-sm font-semibold bg-slate-700/40 border border-slate-700/50 text-slate-500 cursor-not-allowed flex items-center gap-1.5"
+                      title="Please complete the previous lessons in sequence first."
+                    >
+                      <FaLock className="text-xs" />
+                      Locked
+                    </button>
+                  ) : (
+                    <Link to={`/course/${id}/lesson/${lesson._id}`}>
                       <span className="rounded-lg px-4 py-2 text-xs sm:text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors flex items-center gap-1.5 shadow-sm">
                         <FaPlayCircle className="text-xs" />
                         Start
                       </span>
-                    )}
-                  </Link>
+                    </Link>
+                  )}
                 </div>
               </div>
             );

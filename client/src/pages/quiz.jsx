@@ -56,10 +56,19 @@ function Quiz() {
         topic: selectedTopic,
         courseContext: courseNames || "No courses enrolled",
       });
-      setActiveQuiz(res.data);
+      const quizData = res.data;
+      if (!quizData || !Array.isArray(quizData.questions) || quizData.questions.length === 0) {
+        toast.error("The quiz generator returned no questions. Please try again.");
+        return;
+      }
+      setActiveQuiz(quizData);
       toast.success("Quiz generated successfully!");
+      if (quizData.fallback && quizData.note) {
+        toast.info(quizData.note);
+      }
     } catch (error) {
-      const msg = error.response?.data?.message || "Failed to generate quiz. Please try again.";
+      const msg =
+        error.response?.data?.message || "Failed to generate quiz. Please try again.";
       toast.error(msg);
     } finally {
       setLoading(false);

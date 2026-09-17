@@ -45,9 +45,11 @@ function Progress() {
 
   const totalCourses = progressData?.totalCourses || 0;
   const completedCourses = progressData?.completedCourses || 0;
-  const lessonsCompleted = progressData?.lessonsCompleted || 0;
+  const lessonsCompleted = progressData?.totalLessonsCompleted || 0;
   const averageProgress = progressData?.averageProgress || 0;
-  const enrollments = progressData?.enrollments || [];
+  const enrollments = Array.isArray(progressData?.enrollments)
+    ? progressData.enrollments
+    : [];
 
   const stats = [
     {
@@ -160,7 +162,10 @@ function Progress() {
                   <div className="flex items-start justify-between mb-3">
                     <div>
                       <h3 className="font-bold text-white">
-                        {enrollment.courseName || enrollment.title}
+                        {enrollment.courseName ||
+                          enrollment.course?.title ||
+                          enrollment.title ||
+                          "Course"}
                       </h3>
                       <p className="text-sm text-slate-400 mt-0.5">
                         {enrollment.completedLessons || 0} of{" "}

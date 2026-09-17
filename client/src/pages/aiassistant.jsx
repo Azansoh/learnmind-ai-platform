@@ -61,11 +61,11 @@ function AiAssistant() {
     } catch (error) {
       const msg =
         error.response?.data?.message ||
-        "Failed to get AI response. Please try again.";
+        "Sorry, I encountered an error. Please try again.";
       toast.error(msg);
       const errorMessage = {
         role: "assistant",
-        content: "Sorry, I encountered an error. Please try again.",
+        content: msg,
       };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {

@@ -3,6 +3,16 @@ import Enrollment from "../models/enrollment.js";
 import User from "../models/user.js";
 import Activity from "../models/activity.js";
 
+const sortLessons = (course) =>
+  [...course.lessons].sort(
+    (a, b) =>
+      (a.order ?? 0) - (b.order ?? 0) ||
+      String(a._id).localeCompare(String(b._id))
+  );
+
+const getCompletedIds = (enrollment) =>
+  enrollment ? enrollment.completedLessons.map((id) => id.toString()) : [];
+
 export const getAllCourses = async (req, res, next) => {
   try {
     const courses = await Course.find().select("-lessons");
@@ -32,6 +42,7 @@ export const getMyCourses = async (req, res, next) => {
       progress: e.progress,
       enrollmentId: e._id,
       completedLessons: e.completedLessons.length,
+      completedLessonIds: getCompletedIds(e),
     }));
     res.json(courses);
   } catch (error) {
@@ -119,13 +130,20 @@ export const getLesson = async (req, res, next) => {
       ? enrollment.completedLessons.some((id) => id.toString() === lesson._id.toString())
       : false;
 
-    const lessonIndex = course.lessons.findIndex(
+    const sortedLessons = sortLessons(course);
+    const lessonIndex = sortedLessons.findIndex(
       (l) => l._id.toString() === lesson._id.toString()
     );
+
+    const completedIds = getCompletedIds(enrollment);
+    const isLocked = sortedLessons
+      .slice(0, lessonIndex)
+      .some((l) => !completedIds.includes(l._id.toString()));
 
     res.json({
       lesson: lesson.toObject(),
       isCompleted,
+      isLocked,
       totalLessons: course.lessons.length,
       lessonIndex,
       courseTitle: course.title,
@@ -145,15 +163,35 @@ export const completeLesson = async (req, res, next) => {
       return res.status(404).json({ message: "Course not found" });
     }
 
+    const lesson = course.lessons.id(lessonId);
+    if (!lesson) {
+      return res.status(404).json({ message: "Lesson not found" });
+    }
+
     let enrollment = await Enrollment.findOne({ user: req.user._id, course: courseId });
 
     if (!enrollment) {
       enrollment = await Enrollment.create({ user: req.user._id, course: courseId });
     }
 
-    const alreadyCompleted = enrollment.completedLessons.some(
-      (id) => id.toString() === lessonId
+    const sortedLessons = sortLessons(course);
+    const lessonIndex = sortedLessons.findIndex(
+      (l) => l._id.toString() === lessonId
     );
+    const completedIds = getCompletedIds(enrollment);
+
+    if (lessonIndex > 0) {
+      const previousIncomplete = sortedLessons
+        .slice(0, lessonIndex)
+        .some((l) => !completedIds.includes(l._id.toString()));
+      if (previousIncomplete) {
+        return res.status(400).json({
+          message: "Please complete the previous lessons in sequence first.",
+        });
+      }
+    }
+
+    const alreadyCompleted = completedIds.includes(lessonId);
 
     if (!alreadyCompleted) {
       enrollment.completedLessons.push(lessonId);
@@ -164,11 +202,10 @@ export const completeLesson = async (req, res, next) => {
       enrollment.lastAccessedLesson = lessonId;
       await enrollment.save();
 
-      const lesson = course.lessons.id(lessonId);
       await Activity.create({
         user: req.user._id,
         type: "lesson_complete",
-        description: `Completed "${lesson?.title || "lesson"}" in ${course.title}`,
+        description: `Completed "${lesson.title}" in ${course.title}`,
         course: courseId,
       });
     }
@@ -204,9 +241,11 @@ export const getProgress = async (req, res, next) => {
       averageProgress,
       enrollments: enrollments.map((e) => ({
         course: e.course,
+        courseName: e.course?.title || "Unknown Course",
         progress: e.progress,
         completedLessons: e.completedLessons.length,
-        totalLessons: e.course?.totalLessons || 0,
+        totalLessons:
+          e.course?.totalLessons || e.course?.lessons?.length || 0,
       })),
     });
   } catch (error) {

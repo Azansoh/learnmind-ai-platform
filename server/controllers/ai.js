@@ -24,50 +24,38 @@ const DEMO_QUIZ = {
   ],
 };
 
-const getApiKey = () => {
-  const apiKey = process.env.MISTRAL_API_KEY;
-  return apiKey && apiKey !== "your_mistral_api_key_here" ? apiKey : null;
-};
-
 const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
-const MAX_MISTRAL_RETRIES = 3;
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const MAX_PROVIDER_RETRIES = 3;
+
+const PROVIDERS = [
+  {
+    name: "Mistral",
+    getKey: () => process.env.MISTRAL_API_KEY,
+    placeholder: "your_mistral_api_key_here",
+    url: MISTRAL_URL,
+    makeBody: (messages, isQuiz) => ({
+      model: "mistral-small-latest",
+      messages,
+      temperature: 0.7,
+      ...(isQuiz ? { response_format: { type: "json_object" } } : { max_tokens: 2000 }),
+    }),
+  },
+  {
+    name: "Groq",
+    getKey: () => process.env.GROQ_API_KEY,
+    placeholder: "your_groq_api_key_here",
+    url: GROQ_URL,
+    makeBody: (messages, isQuiz) => ({
+      model: "llama-3.3-70b-versatile",
+      messages,
+      temperature: 0.7,
+      ...(isQuiz ? { response_format: { type: "json_object" } } : { max_tokens: 2000 }),
+    }),
+  },
+];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const callMistral = async (apiKey, body) => {
-  let lastResponse = null;
-
-  for (let attempt = 0; attempt < MAX_MISTRAL_RETRIES; attempt++) {
-    const response = await fetch(MISTRAL_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-    });
-
-    lastResponse = response;
-
-    if (response.status !== 429 && response.status < 500) {
-      return response;
-    }
-
-    const retryAfterMs = parseInt(response.headers.get("retry-after") || "", 10);
-    const delay = Math.min(
-      Number.isFinite(retryAfterMs) && retryAfterMs > 0
-        ? retryAfterMs * 1000
-        : 1200 * 2 ** attempt,
-      10000
-    );
-    await sleep(delay);
-  }
-
-  return lastResponse;
-};
-
-const rateLimitedMessage =
-  "The AI service is temporarily busy. Please wait a few seconds and try again.";
 
 const extractTextContent = (content) => {
   if (!content) return "";
@@ -105,7 +93,7 @@ const extractJson = (text) => {
 const sanitizeQuiz = (data) => {
   if (!data || typeof data !== "object") return null;
 
-  let questions = data.questions;
+  const questions = data.questions;
   if (!Array.isArray(questions)) return null;
 
   const sanitized = questions
@@ -139,19 +127,88 @@ const sanitizeQuiz = (data) => {
   };
 };
 
+const rateLimitedMessage =
+  "The AI service is temporarily busy. Please wait a few seconds and try again.";
+
+const callProvider = async (provider, messages, isQuiz) => {
+  const apiKey = provider.getKey();
+  if (!apiKey || apiKey === provider.placeholder) {
+    return { configured: false, provider };
+  }
+
+  let lastResponse = null;
+  for (let attempt = 0; attempt < MAX_PROVIDER_RETRIES; attempt++) {
+    const response = await fetch(provider.url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(provider.makeBody(messages, isQuiz)),
+    });
+
+    lastResponse = response;
+
+    if (response.status !== 429 && response.status < 500) {
+      return { configured: true, response, provider: provider.name };
+    }
+
+    const retryAfterMs = parseInt(response.headers.get("retry-after") || "", 10);
+    const delay = Math.min(
+      Number.isFinite(retryAfterMs) && retryAfterMs > 0
+        ? retryAfterMs * 1000
+        : 1200 * 2 ** attempt,
+      10000
+    );
+    await sleep(delay);
+  }
+
+  return { configured: true, response: lastResponse, provider: provider.name };
+};
+
+const chatWithFallback = async (messages, isQuiz = false) => {
+  let lastError = null;
+
+  for (const provider of PROVIDERS) {
+    const result = await callProvider(provider, messages, isQuiz);
+
+    if (!result.configured) continue;
+
+    const data = await result.response.json().catch(() => null);
+
+    if (result.response.ok) {
+      const content = extractTextContent(
+        data?.choices?.[0]?.message?.content
+      );
+      if (content) {
+        return { ok: true, provider: result.provider, content };
+      }
+      lastError = {
+        provider: result.provider,
+        detail: "AI service returned an empty response.",
+      };
+      continue;
+    }
+
+    lastError = {
+      provider: result.provider,
+      status: result.response.status,
+      detail:
+        data?.error?.message ||
+        data?.message ||
+        `AI service error (${result.response.status})`,
+    };
+  }
+
+  return { ok: false, lastError };
+};
+
 export const askAI = async (req, res, next) => {
   try {
     const { message, courseContext, lessonContext } = req.body;
 
     if (!message || !message.trim()) {
       return res.status(400).json({ message: "Message is required" });
-    }
-
-    const apiKey = getApiKey();
-    if (!apiKey) {
-      return res.json({
-        reply: `This is a demo response. To get real AI responses, add your Mistral API key to server/.env.\n\nYour question: "${message}"\n\nTo get a Mistral API key, visit https://mistral.ai and create a free account.`,
-      });
     }
 
     let systemPrompt =
@@ -164,47 +221,25 @@ export const askAI = async (req, res, next) => {
       systemPrompt += `\nThe current lesson is about: ${lessonContext}`;
     }
 
-    const response = await callMistral(apiKey, {
-      model: "mistral-small-latest",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: message },
-      ],
-      temperature: 0.7,
-      max_tokens: 2000,
-    });
+    const result = await chatWithFallback([
+      { role: "system", content: systemPrompt },
+      { role: "user", content: message },
+    ]);
 
-    if (!response) {
-      return res
-        .status(502)
-        .json({ message: "AI service is temporarily unavailable. Please try again." });
+    if (result.ok) {
+      await Activity.create({
+        user: req.user._id,
+        type: "ai_chat",
+        description: `Asked AI (via ${result.provider}): "${message.slice(0, 50)}..."`,
+      });
+      return res.json({ reply: result.content });
     }
 
-    const data = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        return res.status(429).json({ message: rateLimitedMessage });
-      }
-      const detail =
-        data?.error?.message || data?.message || `Mistral API error (${response.status})`;
-      return res.status(502).json({ message: `AI service error: ${detail}` });
+    let detail = result.lastError?.detail || "AI service is unavailable.";
+    if (result.lastError?.status === 429) {
+      return res.status(429).json({ message: rateLimitedMessage });
     }
-
-    const content = extractTextContent(data?.choices?.[0]?.message?.content);
-    if (!content) {
-      return res
-        .status(502)
-        .json({ message: "AI service returned an empty response. Please try again." });
-    }
-
-    await Activity.create({
-      user: req.user._id,
-      type: "ai_chat",
-      description: `Asked AI: "${message.slice(0, 50)}..."`,
-    });
-
-    res.json({ reply: content });
+    return res.status(502).json({ message: `AI service error: ${detail}` });
   } catch (error) {
     next(error);
   }
@@ -213,64 +248,39 @@ export const askAI = async (req, res, next) => {
 export const generateQuiz = async (req, res, next) => {
   try {
     const { topic, courseContext } = req.body;
-    const apiKey = getApiKey();
-
-    if (!apiKey) {
-      return res.json({
-        ...DEMO_QUIZ,
-        fallback: true,
-        note: "This is a demo quiz. Add your Mistral API key to server/.env for AI-generated quizzes.",
-      });
-    }
 
     const prompt = `Generate a quiz with 5 multiple choice questions about: ${topic || courseContext || "web development"}. Return ONLY valid JSON: {"title":"Quiz Title","questions":[{"question":"...","options":["A","B","C","D"],"correctAnswer":0,"explanation":"..."}]}`;
 
-    const response = await callMistral(apiKey, {
-      model: "mistral-small-latest",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
-    });
+    const result = await chatWithFallback(
+      [{ role: "user", content: prompt }],
+      true
+    );
 
-    if (!response) {
-      return res.json({
-        ...DEMO_QUIZ,
-        fallback: true,
-        note: "Could not reach the AI service. Showing a demo quiz instead.",
-      });
-    }
-
-    const data = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        return res.json({
-          ...DEMO_QUIZ,
-          fallback: true,
-          note: "The AI service is temporarily busy. Showing a demo quiz instead. Please wait a few seconds and try again.",
-        });
+    if (result.ok) {
+      const quiz = sanitizeQuiz(extractJson(result.content));
+      if (quiz) {
+        return res.json({ ...quiz, provider: result.provider });
       }
-      const detail =
-        data?.error?.message || data?.message || `Mistral API error (${response.status})`;
-      return res.json({
-        ...DEMO_QUIZ,
-        fallback: true,
-        note: `Could not reach the AI service (${detail}). Showing a demo quiz instead.`,
-      });
     }
 
-    const content = extractTextContent(data?.choices?.[0]?.message?.content);
-    const parsed = extractJson(content);
-    const quiz = sanitizeQuiz(parsed);
+    const fallbackNote =
+      result.lastError?.status === 429
+        ? "The AI service is temporarily busy. Showing a demo quiz instead. Please wait a few seconds and try again."
+        : result.lastError
+        ? `Could not reach the AI service. Showing a demo quiz instead.`
+        : "No AI provider is configured. Showing a demo quiz instead.";
 
-    if (!quiz) {
-      return res.json({
-        ...DEMO_QUIZ,
-        fallback: true,
-        note: "The AI service returned an unreadable quiz. Showing a demo quiz instead.",
-      });
-    }
+    const hasAnyProvider = PROVIDERS.some(
+      (p) => p.getKey() && p.getKey() !== p.placeholder
+    );
 
-    res.json(quiz);
+    return res.json({
+      ...DEMO_QUIZ,
+      fallback: true,
+      note: hasAnyProvider
+        ? fallbackNote
+        : "No AI provider is configured. Showing a demo quiz instead. Add a Mistral or Groq API key to server/.env for AI-generated quizzes.",
+    });
   } catch (error) {
     next(error);
   }

@@ -28,30 +28,33 @@ const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const MAX_PROVIDER_RETRIES = 3;
 
+const makeBody = (model, messages, isQuiz) => ({
+  model,
+  messages,
+  temperature: 0.7,
+  ...(isQuiz ? { response_format: { type: "json_object" } } : { max_tokens: 2000 }),
+});
+
 const PROVIDERS = [
   {
     name: "Mistral",
     getKey: () => process.env.MISTRAL_API_KEY,
     placeholder: "your_mistral_api_key_here",
     url: MISTRAL_URL,
-    makeBody: (messages, isQuiz) => ({
-      model: "mistral-small-latest",
-      messages,
-      temperature: 0.7,
-      ...(isQuiz ? { response_format: { type: "json_object" } } : { max_tokens: 2000 }),
-    }),
+    models: ["mistral-small-latest"],
   },
   {
     name: "Groq",
     getKey: () => process.env.GROQ_API_KEY,
     placeholder: "your_groq_api_key_here",
     url: GROQ_URL,
-    makeBody: (messages, isQuiz) => ({
-      model: "llama-3.3-70b-versatile",
-      messages,
-      temperature: 0.7,
-      ...(isQuiz ? { response_format: { type: "json_object" } } : { max_tokens: 2000 }),
-    }),
+    models: [
+      "openai/gpt-oss-20b",
+      "groq/compound",
+      "groq/compound-mini",
+      "qwen/qwen3.8-27b",
+      "openai/gpt-oss-120b",
+    ],
   },
 ];
 
@@ -136,34 +139,68 @@ const callProvider = async (provider, messages, isQuiz) => {
     return { configured: false, provider };
   }
 
-  let lastResponse = null;
-  for (let attempt = 0; attempt < MAX_PROVIDER_RETRIES; attempt++) {
-    const response = await fetch(provider.url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(provider.makeBody(messages, isQuiz)),
-    });
+  let lastError = null;
 
-    lastResponse = response;
+  for (const model of provider.models) {
+    let lastResponse = null;
+    let lastData = null;
 
-    if (response.status !== 429 && response.status < 500) {
-      return { configured: true, response, provider: provider.name };
+    for (let attempt = 0; attempt < MAX_PROVIDER_RETRIES; attempt++) {
+      const response = await fetch(provider.url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(makeBody(model, messages, isQuiz)),
+      });
+
+      lastResponse = response;
+      lastData = await response.json().catch(() => null);
+
+      if (response.status === 429 || response.status >= 500) {
+        const retryAfterMs = parseInt(response.headers.get("retry-after") || "", 10);
+        const delay = Math.min(
+          Number.isFinite(retryAfterMs) && retryAfterMs > 0
+            ? retryAfterMs * 1000
+            : 1200 * 2 ** attempt,
+          10000
+        );
+        await sleep(delay);
+        continue;
+      }
+
+      break;
     }
 
-    const retryAfterMs = parseInt(response.headers.get("retry-after") || "", 10);
-    const delay = Math.min(
-      Number.isFinite(retryAfterMs) && retryAfterMs > 0
-        ? retryAfterMs * 1000
-        : 1200 * 2 ** attempt,
-      10000
-    );
-    await sleep(delay);
+    if (!lastResponse) {
+      lastError = { provider: provider.name, detail: "No response from AI service." };
+      break;
+    }
+
+    if (lastResponse.ok) {
+      return {
+        configured: true,
+        response: lastResponse,
+        data: lastData,
+        provider: provider.name,
+        model,
+      };
+    }
+
+    lastError = {
+      provider: provider.name,
+      status: lastResponse.status,
+      detail:
+        lastData?.error?.message ||
+        lastData?.message ||
+        `AI service error (${lastResponse.status})`,
+    };
+
+    if (lastResponse.status !== 404) break;
   }
 
-  return { configured: true, response: lastResponse, provider: provider.name };
+  return { configured: true, error: lastError, provider: provider.name };
 };
 
 const chatWithFallback = async (messages, isQuiz = false) => {
@@ -174,11 +211,9 @@ const chatWithFallback = async (messages, isQuiz = false) => {
 
     if (!result.configured) continue;
 
-    const data = await result.response.json().catch(() => null);
-
-    if (result.response.ok) {
+    if (result.response && result.response.ok) {
       const content = extractTextContent(
-        data?.choices?.[0]?.message?.content
+        result.data?.choices?.[0]?.message?.content
       );
       if (content) {
         return { ok: true, provider: result.provider, content };
@@ -190,13 +225,9 @@ const chatWithFallback = async (messages, isQuiz = false) => {
       continue;
     }
 
-    lastError = {
+    lastError = result.error || {
       provider: result.provider,
-      status: result.response.status,
-      detail:
-        data?.error?.message ||
-        data?.message ||
-        `AI service error (${result.response.status})`,
+      detail: "AI service is unavailable.",
     };
   }
 

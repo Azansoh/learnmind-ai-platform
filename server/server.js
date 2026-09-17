@@ -1,51 +1,19 @@
 import express from "express";
-import cors from "cors";
 import dotenv from "dotenv";
-import cookieParser from "cookie-parser";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+
+import { app, isProduction } from "./app.js";
 import connectDB from "./config/db.js";
 
-import authRoutes from "./routes/auth.js";
-import courseRoutes from "./routes/course.js";
-import quizRoutes from "./routes/quiz.js";
-import studyplanRoutes from "./routes/studyplan.js";
-import activityRoutes from "./routes/activity.js";
-import aiRoutes from "./routes/ai.js";
-
 dotenv.config();
-
-const app = express();
 
 // Set __dirname manually for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const isProduction = process.env.NODE_ENV === "production" || process.env.NODE_ENV === undefined;
 const PORT = process.env.PORT || 5000;
-
-app.use(
-  cors({
-    origin: isProduction ? true : "http://localhost:5173",
-    credentials: true,
-  })
-);
-app.use(express.json());
-app.use(cookieParser());
-
-// Health Check API
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", message: "LearnMind AI server is running", production: isProduction });
-});
-
-// API Routes
-app.use("/api/auth", authRoutes);
-app.use("/api/courses", courseRoutes);
-app.use("/api/quizzes", quizRoutes);
-app.use("/api/studyplan", studyplanRoutes);
-app.use("/api/activities", activityRoutes);
-app.use("/api/ai", aiRoutes);
 
 // Serve Frontend in Production Mode
 if (isProduction) {
@@ -65,7 +33,7 @@ if (isProduction) {
 
   if (clientBuild) {
     console.log("Serving client from:", clientBuild);
-    
+
     // Serve static frontend assets (js, css, images)
     app.use(express.static(clientBuild));
 
@@ -81,12 +49,6 @@ if (isProduction) {
     console.error("Client build not found! Tried directories:", candidates);
   }
 }
-
-// Global Error Handler
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ message: err.message || "Server error" });
-});
 
 connectDB().then(() => {
   app.listen(PORT, "0.0.0.0", () => {

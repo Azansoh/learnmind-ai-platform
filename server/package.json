@@ -1,6 +1,7 @@
 {
   "name": "learnmind-server",
   "version": "1.0.0",
+  "main": "app.js",
   "type": "module",
   "scripts": {
     "start": "node server.js",

@@ -2,7 +2,9 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
+import mongoose from "mongoose";
 
+import connectDB from "./config/db.js";
 import authRoutes from "./routes/auth.js";
 import courseRoutes from "./routes/course.js";
 import quizRoutes from "./routes/quiz.js";
@@ -51,13 +53,42 @@ app.options(/.*/, cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());
 
-// Health Check API
+// Health Check API (always responds, even when MongoDB is unreachable)
 app.get("/api/health", (req, res) => {
   res.json({
     status: "ok",
     message: "LearnMind AI server is running",
     production: isProduction,
+    db: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
   });
+});
+
+// Database diagnostic: returns the real MongoDB error instead of a
+// "buffering timed out" message. Useful on Vercel cold starts.
+app.get("/api/health/db", async (req, res, next) => {
+  try {
+    await connectDB();
+    await mongoose.connection.db.admin().ping();
+    res.json({
+      status: "ok",
+      db: "connected",
+      host: mongoose.connection.host,
+      name: mongoose.connection.name,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Every DB-backed route waits for a live connection first. This prevents
+// cold-start requests from buffering until the 10s timeout.
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
 // API Routes

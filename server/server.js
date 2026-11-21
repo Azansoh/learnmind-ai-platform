@@ -4,7 +4,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 
-import { app } from "./app.js";
+import app from "./app.js";
 import connectDB from "./config/db.js";
 
 dotenv.config();
@@ -48,8 +48,14 @@ if (clientBuild) {
   console.error("Client build not found! Tried directories:", candidates);
 }
 
-connectDB().then(() => {
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
+connectDB()
+  .catch((error) => {
+    // On Vercel the app.js middleware will surface this on DB routes; locally
+    // we still start the server so /api/health can be checked.
+    console.error("Failed to connect to MongoDB on startup:", error.message);
+  })
+  .finally(() => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on port ${PORT}`);
+    });
   });
-});

@@ -1,17 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": null,
-  "buildCommand": "cd client && npm install && npm run build",
-  "outputDirectory": "client/dist",
+  "framework": "express",
   "functions": {
-    "api/index.js": {
+    "server.js": {
+      "memory": 1024,
+      "maxDuration": 30
+    },
+    "app.js": {
       "memory": 1024,
       "maxDuration": 30
     }
-  },
-  "rewrites": [
-    { "source": "/api", "destination": "/api/index.js" },
-    { "source": "/api/(.*)", "destination": "/api/index.js" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
-  ]
+  }
 }

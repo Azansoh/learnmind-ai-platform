@@ -17,12 +17,37 @@ const app = express();
 const isProduction =
   process.env.NODE_ENV === "production" || process.env.NODE_ENV === undefined;
 
-app.use(
-  cors({
-    origin: isProduction ? true : "http://localhost:5173",
-    credentials: true,
-  })
-);
+const allowedOrigins = [
+  "https://learnmind-ai-client-zeta.vercel.app",
+  "http://localhost:5173",
+];
+
+const corsOptions = {
+  origin(origin, callback) {
+    // Allow non-browser / same-origin requests with no Origin header
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (
+      allowedOrigins.includes(origin) ||
+      /^https:\/\/learnmind-ai-client-[a-z0-9-]+-azan-0a1e\.vercel\.app$/.test(
+        origin
+      )
+    ) {
+      return callback(null, true);
+    }
+
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
+
 app.use(express.json());
 app.use(cookieParser());
 
@@ -47,7 +72,7 @@ app.use("/api/ai", aiRoutes);
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ message: err.message || "Server error" });
+  res.status(err.status || 500).json({ message: err.message || "Server error" });
 });
 
 export { isProduction };
